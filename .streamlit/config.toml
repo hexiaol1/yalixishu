@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#0F52BA"              # 宝石蓝主色调（按钮、滑块、选中态）
+backgroundColor = "#F4F7FA"           # 柔和冷灰画布背景，突出白色数据卡片
+secondaryBackgroundColor = "#FFFFFF"  # 纯白侧边栏与卡片底色
+textColor = "#1E293B"                 # 深石板灰字体，阅读舒适不刺眼
+font = "sans serif"
