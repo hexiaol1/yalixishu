@@ -1,0 +1,17 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pkl
+
+# 环境变量与编辑器配置
+.env
+.venv/
+venv/
+.vscode/
+.idea/
+
+# 忽略本地真实油田数据文件（如公开仓库请务必保留此项）
+*.csv
+*.xlsx
+*.xls
+*.las
