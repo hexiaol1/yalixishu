@@ -4,15 +4,17 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
 import joblib
 import io
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, GridSearchCV, KFold
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import plot_tree, export_text
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.inspection import permutation_importance
 
-# ==================== 1. 页面配置与自定义 CSS 美化 ====================
+# ==================== 1. 页面配置与样式注入 ====================
 st.set_page_config(
     page_title="威远页岩气藏地层压力系数智能预测平台",
     page_icon="🛢️",
@@ -20,15 +22,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 注入现代能源仪表盘 CSS 样式
+# 配置 Matplotlib 字体防乱码（兼容 Linux/Windows/Mac）
+plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans", "Arial Unicode MS"]
+plt.rcParams["axes.unicode_minus"] = False
+
 st.markdown("""
 <style>
-    /* 全局字体与背景微调 */
     .block-container {
         padding-top: 1.5rem;
         padding-bottom: 2rem;
     }
-    /* 顶部渐变主横幅 */
     .hero-banner {
         background: linear-gradient(135deg, #0B2545 0%, #134074 60%, #1D63B8 100%);
         padding: 1.6rem 2rem;
@@ -48,7 +51,6 @@ st.markdown("""
         font-size: 0.95rem;
         color: #CBD5E1;
     }
-    /* KPI 指标卡片美化 */
     div[data-testid="metric-container"] {
         background-color: #FFFFFF;
         border: 1px solid #E2E8F0;
@@ -62,7 +64,6 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(15, 23, 42, 0.08);
     }
-    /* 标签页样式优化 */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         background-color: #E2E8F0;
@@ -71,7 +72,7 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 8px;
-        padding: 8px 18px;
+        padding: 8px 16px;
         font-weight: 600;
     }
     .stTabs [aria-selected="true"] {
@@ -82,11 +83,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 顶部主横幅
 st.markdown("""
 <div class="hero-banner">
     <h1>🛢️ 威远地区连续地层压力系数智能预测平台</h1>
-    <p>Weiyuan Shale Gas Formation Pressure Prediction · 随机森林集成学习 · 超参数自动寻优 · 测井多道联动解释</p>
+    <p>Weiyuan Shale Gas Formation Pressure Prediction · 随机森林集成学习 · 超参数自动寻优 · 测井多道联动与决策树解析</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -104,7 +104,6 @@ for key, default_val in [
 def generate_mock_weiyuan_data(n_samples=600):
     np.random.seed(42)
     depth = np.linspace(2600, 3100, n_samples)
-    # 模拟底部龙马溪组优质页岩段（高GR、高AC、低DEN、超压特征明显）
     shale_zone = np.exp(-((depth - 2950) / 90) ** 2)
     gr = 95 + 85 * shale_zone + 15 * np.sin((depth - 2600) / 30) + np.random.normal(0, 8, n_samples)
     ac = 68 + 24 * shale_zone + 5 * np.cos((depth - 2600) / 40) + np.random.normal(0, 2.5, n_samples)
@@ -132,7 +131,14 @@ def generate_mock_weiyuan_data(n_samples=600):
         "Pressure_Coeff": np.round(pressure_coeff, 3)
     })
 
-# ==================== 2. 侧边栏配置 ====================
+def preprocess_features(data_df, features, log_cols):
+    X = data_df[features].copy()
+    for col in log_cols:
+        if col in X.columns:
+            X[col] = np.log10(np.clip(X[col], 1e-3, None))
+    return X
+
+# ==================== 2. 侧边栏：数据接入与特征映射 ====================
 with st.sidebar:
     st.markdown("### 🗂️ 数据接入与测井配置")
     data_source = st.radio(
@@ -181,18 +187,12 @@ if df is None:
     st.info("👈 请在左侧边栏上传测井数据或选择模拟数据进行体验。")
     st.stop()
 
-def preprocess_features(data_df, features, log_cols):
-    X = data_df[features].copy()
-    for col in log_cols:
-        if col in X.columns:
-            X[col] = np.log10(np.clip(X[col], 1e-3, None))
-    return X
-
-# ==================== 3. 主界面四大模块 ====================
-tab1, tab2, tab3, tab4 = st.tabs([
+# ==================== 3. 主界面五大标签页 ====================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 测井数据探索 (EDA)",
     "⚙️ 超参数优选与模型评估",
     "🔍 特征敏感性与主控因素",
+    "🌲 决策树拓扑结构可视化",
     "🚀 未知井段批量预测与导出"
 ])
 
@@ -230,7 +230,6 @@ with tab1:
             df, x=target_col, nbins=30, marginal="box",
             color_discrete_sequence=["#0F52BA"], opacity=0.85
         )
-        # 添加常压/超压分界参考线
         fig_hist.add_vline(x=1.2, line_dash="dash", line_color="#10B981", annotation_text="弱超压 (1.2)")
         fig_hist.add_vline(x=1.5, line_dash="dash", line_color="#EF4444", annotation_text="强超压 (1.5)")
         fig_hist.update_layout(
@@ -250,7 +249,7 @@ with tab1:
         with t_col2:
             st.dataframe(df[feature_cols + [target_col]].describe().T[["count", "mean", "std", "min", "50%", "max"]], use_container_width=True)
 
-# -------------------- TAB 2: 超参数优选与多道测井评估 --------------------
+# -------------------- TAB 2: 超参数优选与模型评估 --------------------
 with tab2:
     with st.container(border=True):
         st.markdown("#### 🛠️ 随机森林超参数搜索空间配置")
@@ -335,7 +334,6 @@ with tab2:
         depth_test = st.session_state.depth_test
         df_test_raw = st.session_state.df_test_raw
 
-        # 计算所有决策树的预测均值与标准差（衡量预测不确定性）
         all_tree_preds = np.array([tree.predict(X_test.values) for tree in model.estimators_])
         y_pred = np.mean(all_tree_preds, axis=0)
         y_std = np.std(all_tree_preds, axis=0)
@@ -345,7 +343,6 @@ with tab2:
         mae = mean_absolute_error(y_test, y_pred)
         mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
 
-        # KPI 卡片栏
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("测试集决定系数 (R²)", f"{r2:.4f}", delta="拟合优度")
         m2.metric("均方根误差 (RMSE)", f"{rmse:.4f}")
@@ -353,8 +350,6 @@ with tab2:
         m4.metric("平均相对误差 (MAPE)", f"{mape:.2f}%")
 
         st.markdown("<br>", unsafe_allow_html=True)
-
-        # ---- 专业测井多道联动剖面图（核心视觉升级） ----
         st.markdown("#### 🧭 测试井段多道测井响应与压力系数置信带综合剖面")
         sort_idx = np.argsort(depth_test.values)
         d_s = depth_test.values[sort_idx]
@@ -363,7 +358,6 @@ with tab2:
         ystd_s = y_std[sort_idx]
         df_raw_s = df_test_raw.iloc[sort_idx]
 
-        # 自动匹配可用常规测井道
         has_gr = any(c.upper() == "GR" for c in df_raw_s.columns)
         has_ac = any(c.upper() in ["AC", "DT"] for c in df_raw_s.columns)
         has_den = any(c.upper() in ["DEN", "RHOB"] for c in df_raw_s.columns)
@@ -390,7 +384,6 @@ with tab2:
         )
 
         col_idx = 1
-        # 道 1：GR 填充道
         if has_gr:
             gr_col = [c for c in df_raw_s.columns if c.upper() == "GR"][0]
             fig_log.add_trace(go.Scatter(
@@ -401,7 +394,6 @@ with tab2:
             fig_log.update_xaxes(title_text="API", row=1, col=col_idx, showgrid=True, gridcolor="#E2E8F0")
             col_idx += 1
 
-        # 道 2：AC / DEN 道
         if has_ac or has_den:
             if has_ac:
                 ac_col = [c for c in df_raw_s.columns if c.upper() in ["AC", "DT"]][0]
@@ -418,7 +410,6 @@ with tab2:
             fig_log.update_xaxes(title_text="AC / DEN", row=1, col=col_idx, showgrid=True, gridcolor="#E2E8F0")
             col_idx += 1
 
-        # 道 3：RT 对数道
         if has_rt:
             rt_col = [c for c in df_raw_s.columns if c.upper() in ["RT", "RD"]][0]
             fig_log.add_trace(go.Scatter(
@@ -428,7 +419,6 @@ with tab2:
             fig_log.update_xaxes(title_text="Ω·m (Log)", type="log", row=1, col=col_idx, showgrid=True, gridcolor="#E2E8F0")
             col_idx += 1
 
-        # 主道：压力系数对比 + 置信区间带
         fig_log.add_trace(go.Scatter(
             x=yp_s + ystd_s, y=d_s, mode="lines", line=dict(width=0),
             showlegend=False, hoverinfo="skip"
@@ -459,7 +449,6 @@ with tab2:
         )
         st.plotly_chart(fig_log, use_container_width=True)
 
-        # ---- 下方双图：交会图 + 预测残差分布 ----
         c_sub1, c_sub2 = st.columns(2)
         with c_sub1:
             st.markdown("#### 🎯 实测 vs 预测交会图（颜色映射误差绝对值）")
@@ -534,7 +523,6 @@ with tab3:
             fig_perm.update_layout(height=400, showlegend=False, plot_bgcolor="#F8FAFC", paper_bgcolor="#FFFFFF")
             st.plotly_chart(fig_perm, use_container_width=True)
 
-        # 归一化双指标对比雷达图
         if len(features) >= 3:
             st.markdown("#### 🕸️ 双维度归一化特征敏感性雷达对比")
             mdi_norm = mdi_scores / (mdi_scores.sum() + 1e-9)
@@ -555,8 +543,88 @@ with tab3:
             )
             st.plotly_chart(fig_radar, use_container_width=True)
 
-# -------------------- TAB 4: 未知井段批量预测 --------------------
+# -------------------- TAB 4: 决策树拓扑结构可视化 --------------------
 with tab4:
+    st.subheader("🌲 随机森林单棵决策树拓扑与分裂规则解析")
+    if st.session_state.best_model is None:
+        st.info("请先在【超参数优选与模型评估】标签页完成模型训练。")
+    else:
+        model = st.session_state.best_model
+        features = st.session_state.feature_cols
+        n_trees = len(model.estimators_)
+
+        with st.container(border=True):
+            t_cfg1, t_cfg2, t_cfg3 = st.columns([1.2, 1.2, 1])
+            with t_cfg1:
+                tree_idx = st.slider(
+                    f"选择查看的决策树编号 (共 {n_trees} 棵)",
+                    min_value=1, max_value=n_trees, value=1
+                ) - 1
+            with t_cfg2:
+                plot_depth = st.slider(
+                    "可视化的最大树深 (防止节点过密重叠)",
+                    min_value=1, max_value=5, value=3
+                )
+            with t_cfg3:
+                show_impurity = st.checkbox("显示节点均方误差 (squared_error)", value=True)
+                show_proportion = st.checkbox("以百分比显示节点样本占比", value=True)
+
+        selected_tree = model.estimators_[tree_idx]
+        actual_depth = selected_tree.get_depth()
+        n_leaves = selected_tree.get_n_leaves()
+
+        tk1, tk2, tk3 = st.columns(3)
+        tk1.metric("当前选中树编号", f"Tree #{tree_idx + 1}")
+        tk2.metric("该树实际最大深度", f"{actual_depth} 层")
+        tk3.metric("该树叶子节点总数", f"{n_leaves} 个")
+
+        st.markdown("#### 1. 决策树分裂拓扑模式图（节点颜色越深代表预测压力系数越高）")
+        fig_width = max(14, 4.5 * (2 ** min(plot_depth, 4)))
+        fig_height = max(6, 2.4 * plot_depth)
+
+        fig_tree, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=180)
+        plot_tree(
+            selected_tree,
+            max_depth=plot_depth,
+            feature_names=features,
+            filled=True,
+            rounded=True,
+            proportion=show_proportion,
+            impurity=show_impurity,
+            precision=3,
+            fontsize=9,
+            ax=ax
+        )
+        ax.set_title(
+            f"Weiyuan Pressure Prediction - Random Forest Estimator #{tree_idx + 1} (Top {plot_depth} Levels)",
+            fontsize=13, fontweight="bold", pad=16, color="#0B2545"
+        )
+        plt.tight_layout()
+        st.pyplot(fig_tree, use_container_width=True)
+
+        img_buf = io.BytesIO()
+        fig_tree.savefig(img_buf, format="png", dpi=300, bbox_inches="tight")
+        plt.close(fig_tree)
+
+        st.download_button(
+            label="🖼️ 下载高清决策树结构图 (300 DPI PNG)",
+            data=img_buf.getvalue(),
+            file_name=f"weiyuan_rf_tree_{tree_idx + 1}_depth_{plot_depth}.png",
+            mime="image/png"
+        )
+
+        with st.expander("📜 查看该决策树的测井曲线阈值分裂规则 (IF-ELSE 文本树)", expanded=False):
+            tree_rules = export_text(
+                selected_tree,
+                feature_names=features,
+                max_depth=plot_depth,
+                decimals=3
+            )
+            st.code(tree_rules, language="text")
+            st.caption("注：若特征在侧边栏开启了 log10 对数变换（如 RT），则规则中的阈值为 log10(RT) 后的数值。")
+
+# -------------------- TAB 5: 未知井段批量预测与导出 --------------------
+with tab5:
     if st.session_state.best_model is None:
         st.info("请先完成模型训练，再进行新数据预测或模型导出。")
     else:
